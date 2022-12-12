@@ -1,0 +1,160 @@
+---
+title: |
+  | \vspace{0.5cm} \LARGE MA678 Project: Sephora Website Analysis for Products
+author: "Hanzhang Song"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+# 1. Abstract
+This report uses data from Kaggle, containing products and their ratings, ingredients, and other information from Sephora website. With the data set, I want to explore whether there is a relationship between the number of loves on different categories of product and their actual ratings. I'm curious about if these two measurements of popularity are correlated, and which product gives the most accurate result when we use the number of loves to predict ratings. There are a lot of categories on Sephora website. In this project, I will randomly select 10 of them to run the model.
+I find that products have larger number of loves will also have higher ratings, but this finding is limited.
+
+
+# 2. Introduction
+Loves is a way to collect your desired items before adding them to the shopping cart. By clicking the heart icons, you can add the items to your Love list and whenever you visit the website again, you can directly go to your list, putting your final selections into shopping cart and checking out. The Love list gives your extra time to consider your choices, without losing your initial interests. The love list is based on customers' first impression on products based on their appearances and descriptions. From the data set, the most popular item got 1,300,000 loves. However, does this product also have the highest rating? Can we use the number of loves to predict ratings? Which category returns the closest estimation?
+
+The following report will analyze products’ information and identify relationships, allowing Sephora to think about how they did in describing products on the website and targeting customers. Overall, the analyses and results obtained from this project can be used to suggest companies to add pertinence on their advertisements.
+
+
+# 3. Method
+## Data background
+My data set consists of information collected from 9168 products(from 324 brands and 143 categories) on Sephora website, including their attributes (name, brand, category, price, ingredients), number of reviews and loves, and a few binary variables(if the product is sold online only, if the product is limited edition, if the product has a limited time offer).
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(knitr)
+library(arm)
+library(data.table)
+library(foreign)
+library(gridExtra)
+library(car)
+library(stringr)
+library(rstan)
+library(rstanarm)
+library(zoo)
+library(dplyr)
+library(coefplot)
+```
+
+```{r,echo=FALSE}
+spr <- read.csv("sephora_website_dataset.csv")
+```
+
+Here is a general review on summary statistics:
+```{r,echo=FALSE}
+summary(spr)
+```
+
+And let's take a look at all 143 categories(first 10 rows):
+```{r,echo=FALSE}
+cat_count <- spr %>%
+  group_by(category) %>%
+  summarise(`Count` = n())
+head(cat_count,10)
+cat_count[which.max(cat_count$Count),]
+cat_count[which.min(cat_count$Count),]
+```
+We can see that perfume has the largest number of products and accessories has the least.
+
+## Visulization
+In order to make the multilevel model, I assigned a unique ID of each category(cat_id), from 1 to 143. After that, I did random sampling to select 10 categories, and keep products that belong to those 10 categories: Mascara(112), Body Sprays & Deodorant(18), Face Primer(58), Face Sunscreen(61), Toners(140), Hair Styling & Treatments(85), Lipstick(104), Bath & Body(5), Makeup & Travel Cases(108), and Lip Stain(101).
+```{r,echo=FALSE}
+spr_id <- spr %>%
+  group_by(category) %>%
+  mutate(`cat_id` = cur_group_id())
+set.seed(678)
+cats <- sample(unique(spr_id$cat_id),10)
+spr_df <- spr_id[spr_id$cat_id %in% cats,]
+```
+
+```{r,echo=FALSE}
+ggplot(spr_df, aes(x = love, y = rating, color = cat_id)) +
+  geom_point()
+kvd <- spr[which.max(spr$love),]
+kvd[,c("id", "brand", "category", "name", "rating", "love")]  
+```
+As we can see from the scatter plot, the product with largest number of loves, KVD Vegan Beauty lipstick, earns 1,300,000 loves. It has a rating of 4.5, which is relatively high but not the highest.
+
+```{r,echo=FALSE}
+ggplot(spr_df) +
+  geom_bar(aes(x = rating,fill = rating)) + 
+  labs(x = "Rating \n", y = "\n Count ", title = "Distribution of ratings \n")
+```
+Most products have ratings above 4, and the most common rating is 4.5.
+
+## Set up for the multilevel model
+Also, the number of loves and rating are on very different scales, so I divided the number of loves by 1000, and called this new variable love1000, which would be used in my model later.
+```{r,echo=FALSE}
+spr_df$love/1000 -> spr_df$love1000
+```
+
+Now we can build the model as a function of love1000(number of loves divided by 1000) with varying intercepts across categories of product:
+lmer(rating ~ love1000 + (1 | cat_id))
+```{r,echo=FALSE}
+fit_1 <- lmer(rating ~ love1000 + (1 | cat_id), data = spr_df)
+summary(fit_1)
+```
+
+
+# 4. Result
+```{r,echo=FALSE}
+summary(fit_1)
+```
+Love1000 = 0.001. For every category, as love1000 increases by 1, rating is predicted to increase by 0.001.
+
+```{r,echo=FALSE}
+display(fit_1,4)
+```
+(0.14)^2 : (0.65)^2 = 0.046
+
+```{r,echo=FALSE}
+coefplot(fit_1,title = "Coefficient plot")
+```
+
+```{r,echo=FALSE}
+coef(fit_1)
+```
+Looking at the coefficients, we can conclude that the regression for 
+category 5(Bath & Body) is y = 4.081 + 0.001 * love1000, 
+y = 3.991 + 0.001 * love1000 for category 18(Body Sprays & Deodorant), 
+y = 4.262 + 0.002 * love1000 for category 58(Face Primer), and so on so forth. 
+The slope(coefficient on love1000) is identical here because they were specified in the model.
+
+Alternatively, if we look at "fixed effects", estimated model averaging over the categories.
+```{r,echo=FALSE}
+fixef(fit_1)
+```
+The estimated regression line of an average category is thus y = 4.051 - 0.001*love1000. We can then look at "random effects", category-level errors.
+
+```{r,echo=FALSE}
+ranef(fit_1)
+```
+The intercept is shifted up or down in particular categories. For example, in category 5(Bath & Body), the estimated intercept is 0.03 higher than average, so that the regression line is (4.051 + 0.03) - 0.001 * love1000 = 4.081 - 0.001 * love1000.
+Categories that have shifted-up intercepts are: Bath & Body(5), Lip Stain(101), Lipstick(104), Makeup & Travel Cases(108), and Toners(140).
+Categories that have shifted-down intercepts are: Body Sprays & Deodorant(18), Face Primer(58), Face Sunscreen(61), Hair Styling & Treatments(85), and Mascara(112).
+
+## Residual Plot
+```{r,echo=FALSE}
+res <- resid(fit_1)
+plot(fitted(fit_1), res)
+abline(0,0)
+```
+
+
+# 5. Discussion
+The results of modeling suggests that larger number of loves will lead to higher ratings of products as well based on the 10 categories I selected randomly. However, due to the size of data set, we cannot conclude that all products follow this rule. Also, the data set is from 3 years ago, Sephora must have updated list of products in this time interval. Therefore, there is limitation of this project. In the future, I will explore this data set further by adding more predictors.
+
+\newpage
+# 6. Appendix
+## Code Appendix
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
+
+# 7. Supplement
+## Reference
+https://www.kaggle.com/datasets/raghadalharbi/all-products-available-on-sephora-website?resource=download
+
